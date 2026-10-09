@@ -1,5 +1,5 @@
 -- ═══════════════════════════════════════════════════
---  AutoBuy + AutoRoll + AutoCollect (orbs + leaves)
+--  AutoBuy + AutoRoll + AutoCollect (orbs + leaves) holy vivecoded script with love <3
 -- ═══════════════════════════════════════════════════
 
 local Players = game:GetService("Players")
