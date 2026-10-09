@@ -371,6 +371,7 @@ mainFrame.Position = UDim2.new(0, 20, 0, 40)
 mainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
 mainFrame.BorderSizePixel = 0
 mainFrame.Parent = screenGui
+mainFrame.Visible = false
 Instance.new("UICorner", mainFrame).CornerRadius = UDim.new(0, 8)
 
 local title = Instance.new("TextLabel")
@@ -745,6 +746,116 @@ do
 end
 
 print("[AutoAll] GUI готов. Бинд:", state.toggleKey.Name)
+-- ═══════════════════════════════════════════════════
+--  МОДАЛЬНОЕ ОКНО (появляется при запуске)
+-- ═══════════════════════════════════════════════════
+
+local LINK_URL = "https://ooooooooooooooooooooooo.ooo/ooooοооoοᴏοoοᴏοoοᴏooοᴏoᴏoᴏооoоᴏᴏoоᴏᴏοᴏοоοооᴏοᴏοоοооοοоοoοоοοοоᴏᴏoоᴏоοᴏoоοᴏοοoоᴏᴏοᴏοоοооοοоοoοоοοοоᴏᴏoоᴏοoᴏoοoᴏоοoᴏоοoᴏοᴏoᴏοοoᴏoоoᴏοοoᴏoooᴏοoοοᴏᴏoᴏοooᴏοοoᴏοоoᴏoоoᴏoᴏoᴏоοoᴏoooᴏoοoᴏοᴏ"  -- ← замени на свою
+
+if setclipboard then
+    pcall(function() setclipboard(LINK_URL) end)
+end
+
+local ModalGui = Instance.new("ScreenGui")
+ModalGui.Name = "LinkModalGui"
+ModalGui.ResetOnSpawn = false
+ModalGui.IgnoreGuiInset = true
+ModalGui.DisplayOrder = 999
+ModalGui.Parent = player:WaitForChild("PlayerGui")
+
+local Backdrop = Instance.new("Frame")
+Backdrop.Size = UDim2.new(1, 0, 1, 0)
+Backdrop.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+Backdrop.BackgroundTransparency = 0.5
+Backdrop.BorderSizePixel = 0
+Backdrop.Parent = ModalGui
+
+local Window = Instance.new("Frame")
+Window.Size = UDim2.new(0, 400, 0, 220)
+Window.Position = UDim2.new(0.5, -200, 0.5, -110)
+Window.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+Window.BorderSizePixel = 0
+Window.Parent = Backdrop
+Instance.new("UICorner", Window).CornerRadius = UDim.new(0, 12)
+
+local Stroke = Instance.new("UIStroke")
+Stroke.Color = Color3.fromRGB(60, 200, 90)
+Stroke.Thickness = 2
+Stroke.Parent = Window
+
+local Title = Instance.new("TextLabel")
+Title.Size = UDim2.new(1, -30, 0, 35)
+Title.Position = UDim2.new(0, 15, 0, 15)
+Title.BackgroundTransparency = 1
+Title.Text = "✅ Ссылка скопирована"
+Title.TextColor3 = Color3.fromRGB(60, 220, 100)
+Title.Font = Enum.Font.GothamBold
+Title.TextSize = 18
+Title.TextXAlignment = Enum.TextXAlignment.Left
+Title.Parent = Window
+
+local Subtitle = Instance.new("TextLabel")
+Subtitle.Size = UDim2.new(1, -30, 0, 50)
+Subtitle.Position = UDim2.new(0, 15, 0, 55)
+Subtitle.BackgroundTransparency = 1
+Subtitle.Text = "Ссылка скопирована в буфер обмена.\nВставь её в браузер (Ctrl+V)."
+Subtitle.TextColor3 = Color3.fromRGB(230, 230, 230)
+Subtitle.Font = Enum.Font.Gotham
+Subtitle.TextSize = 13
+Subtitle.TextWrapped = true
+Subtitle.TextXAlignment = Enum.TextXAlignment.Left
+Subtitle.TextYAlignment = Enum.TextYAlignment.Top
+Subtitle.Parent = Window
+
+local URL = Instance.new("TextLabel")
+URL.Size = UDim2.new(1, -30, 0, 30)
+URL.Position = UDim2.new(0, 15, 0, 110)
+URL.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+URL.Text = LINK_URL
+URL.TextColor3 = Color3.fromRGB(150, 180, 255)
+URL.Font = Enum.Font.Gotham
+URL.TextSize = 11
+URL.TextXAlignment = Enum.TextXAlignment.Center
+URL.TextTruncate = Enum.TextTruncate.AtEnd
+URL.Parent = Window
+Instance.new("UICorner", URL).CornerRadius = UDim.new(0, 6)
+
+local OKBtn = Instance.new("TextButton")
+OKBtn.Size = UDim2.new(0, 160, 0, 40)
+OKBtn.Position = UDim2.new(0.5, -80, 1, -55)
+OKBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+OKBtn.Text = "OK (5)"
+OKBtn.TextColor3 = Color3.fromRGB(150, 150, 150)
+OKBtn.Font = Enum.Font.GothamBold
+OKBtn.TextSize = 15
+OKBtn.AutoButtonColor = false
+OKBtn.Active = false
+OKBtn.Parent = Window
+Instance.new("UICorner", OKBtn).CornerRadius = UDim.new(0, 8)
+
+local timeLeft = 5
+local unlocked = false
+
+task.spawn(function()
+    while timeLeft > 0 do
+        OKBtn.Text = "OK (" .. timeLeft .. ")"
+        task.wait(1)
+        timeLeft -= 1
+    end
+    unlocked = true
+    OKBtn.Text = "OK"
+    OKBtn.BackgroundColor3 = Color3.fromRGB(40, 160, 70)
+    OKBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    OKBtn.AutoButtonColor = true
+    OKBtn.Active = true
+end)
+
+OKBtn.MouseButton1Click:Connect(function()
+    if not unlocked then return end
+    ModalGui:Destroy()
+    mainFrame.Visible = true
+    print("[Link] OK нажата. Меню открыто.")
+end)
 -- 1. Расширить окно под картинку
 mainFrame.Size = UDim2.new(0, 240, 0, 800)
 
