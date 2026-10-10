@@ -1,5 +1,5 @@
 -- ═══════════════════════════════════════════════════
---  AutoBuy + AutoRoll + AutoCollect (orbs + leaves) holy vivecoded script with love <3
+--  AutoBuy + AutoRoll + AutoCollect + AutoPlace
 -- ═══════════════════════════════════════════════════
 
 local Players = game:GetService("Players")
@@ -72,20 +72,20 @@ end
 -- ═══════════════════════════════════════════════════
 
 local state = {
-    -- AutoBuy
     buyEnabled = false,
     slots = {},
     connections = {},
     selected = {},
-    -- AutoRoll
     rollEnabled = false,
     rollThread = nil,
     rollInterval = 10,
-    -- AutoCollect
     collectEnabled = false,
     collectThread = nil,
     collectPlot = nil,
-    -- GUI
+    placeEnabled = false,
+    placeThread = nil,
+    placeRemembered = {},
+    placeMyPlot = nil,
     guiVisible = true,
     toggleKey = Enum.KeyCode.RightShift,
     waitingForBind = false,
@@ -155,7 +155,7 @@ local function stopRollLoop()
 end
 
 -- ═══════════════════════════════════════════════════
---  AUTO COLLECT (orbs + leaves)
+--  ОБЩИЕ ХЕЛПЕРЫ
 -- ═══════════════════════════════════════════════════
 
 local ARRIVE_DISTANCE = 4
@@ -201,6 +201,10 @@ local function FindMyPlot()
     end
     return nil
 end
+
+-- ═══════════════════════════════════════════════════
+--  AUTO COLLECT (orbs + leaves)
+-- ═══════════════════════════════════════════════════
 
 local function CollectOrbsFromFolder(folder, orbType)
     local result = {}
@@ -303,6 +307,201 @@ local function GoToTarget(entry, position)
     return true
 end
 
+-- ═══════════════════════════════════════════════════
+--  AUTO PLACE (высший приоритет)
+-- ═══════════════════════════════════════════════════
+
+local PLACE_SCAN_INTERVAL = 1
+local PLACE_ARRIVE_DISTANCE = 4
+local PLACE_MOVE_TIMEOUT = 5
+local PLACE_E_PRESS_DELAY = 0.15
+
+local function FindMyPlotForPlace()
+    local map = workspace:FindFirstChild("Map")
+    if not map then return nil end
+    local myId = "Plot_" .. player.UserId
+    for _, plot in ipairs(map:GetChildren()) do
+        if plot.Name:match("^Plot%d+$") then
+            local inner = plot:FindFirstChild(myId)
+            if inner then return inner end
+        end
+    end
+    return nil
+end
+
+local function GetPlaceSlots(plot)
+    local slots = {}
+    for _, floor in ipairs(plot:GetChildren()) do
+        if floor.Name:match("^Floor%d+$") then
+            for _, slot in ipairs(floor:GetChildren()) do
+                if slot.Name:match("^Slot%d+$") then
+                    table.insert(slots, {path = floor.Name .. "/" .. slot.Name, instance = slot})
+                end
+            end
+        end
+    end
+    return slots
+end
+
+local function GetPlaceSlotContent(slotInstance)
+    local top = slotInstance:FindFirstChild("Top")
+    if not top then return nil end
+    for _, child in ipairs(top:GetChildren()) do
+        if child.Name ~= "ProxAttachement"
+            and child.Name ~= "ProximityPrompt"
+            and not child:IsA("ProximityPrompt") then
+            local key = child:GetAttribute("Key")
+            return key or child.Name
+        end
+    end
+    return nil
+end
+
+local function GetPlaceSlotPosition(slotInstance)
+    local top = slotInstance:FindFirstChild("Top")
+    if not top then return nil end
+    if top:IsA("BasePart") then return top.Position end
+    local part = top:FindFirstChildWhichIsA("BasePart", true)
+    if part then return part.Position end
+    return nil
+end
+
+local function PlaceLeafMatches(item, leafName)
+    if not item then return false end
+    if item.Name == leafName then return true end
+    local key = item:GetAttribute("Key")
+    if key == leafName then return true end
+    if item.Name:gsub("%s+", "") == leafName then return true end
+    return false
+end
+
+local function FindPlaceLeafInHand(leafName)
+    local char = player.Character
+    if not char then return nil end
+    for _, item in ipairs(char:GetChildren()) do
+        if PlaceLeafMatches(item, leafName) then return item end
+    end
+    return nil
+end
+
+local function FindPlaceLeafInBag(leafName)
+    local bag = player:FindFirstChild("Backpack")
+    if not bag then return nil end
+    for _, item in ipairs(bag:GetChildren()) do
+        if PlaceLeafMatches(item, leafName) then return item end
+    end
+    return nil
+end
+
+local function GoToPlaceSlot(slot)
+    local _, root, humanoid = GetChar()
+    if not root or not humanoid then return false end
+    local pos = GetPlaceSlotPosition(slot.instance)
+    if not pos then return false end
+    humanoid:MoveTo(pos)
+    local timeout = tick() + PLACE_MOVE_TIMEOUT
+    while state.placeEnabled do
+        if not root.Parent then return false end
+        if (root.Position - pos).Magnitude <= PLACE_ARRIVE_DISTANCE then return true end
+        if tick() > timeout then return false end
+        task.wait(0.1)
+    end
+    return false
+end
+
+local function PlaceLeaf(slot, leafName)
+    local inHand = FindPlaceLeafInHand(leafName)
+    if not inHand then
+        local inBag = FindPlaceLeafInBag(leafName)
+        if inBag and inBag:IsA("Tool") then
+            local _, _, humanoid = GetChar()
+            if humanoid then
+                pcall(function() humanoid:EquipTool(inBag) end)
+                task.wait(0.3)
+                inHand = FindPlaceLeafInHand(leafName)
+            end
+        end
+    end
+    if not inHand then
+        print("[AutoPlace] ❌", leafName, "не в руке/инвентаре")
+        return false
+    end
+    print("[AutoPlace] → Иду к", slot.path, "с", leafName)
+    if not GoToPlaceSlot(slot) then return false end
+    task.wait(PLACE_E_PRESS_DELAY)
+    PressE()
+    print("[AutoPlace] ⌨ E на", slot.path)
+    task.wait(0.5)
+    local content = GetPlaceSlotContent(slot.instance)
+    if content == leafName then
+        print("[AutoPlace] ✅ Поставлен", leafName)
+        return true
+    end
+    print("[AutoPlace] ⚠ Не встал (сейчас:", tostring(content) .. ")")
+    return false
+end
+
+local function HasPendingPlace()
+    if not state.placeEnabled then return false end
+    local plot = state.placeMyPlot or FindMyPlotForPlace()
+    if not plot then return false end
+    state.placeMyPlot = plot
+    for _, slot in ipairs(GetPlaceSlots(plot)) do
+        local content = GetPlaceSlotContent(slot.instance)
+        if content then
+            state.placeRemembered[slot.path] = content
+        else
+            if state.placeRemembered[slot.path] then
+                return true
+            end
+        end
+    end
+    return false
+end
+
+local function ProcessPlaceOnce()
+    local plot = FindMyPlotForPlace()
+    if not plot then return false end
+    state.placeMyPlot = plot
+    for _, slot in ipairs(GetPlaceSlots(plot)) do
+        local content = GetPlaceSlotContent(slot.instance)
+        if content then
+            state.placeRemembered[slot.path] = content
+        else
+            local wanted = state.placeRemembered[slot.path]
+            if wanted then
+                PlaceLeaf(slot, wanted)
+                return true
+            end
+        end
+    end
+    return false
+end
+
+local function StartPlaceLoop()
+    if state.placeThread then return end
+    state.placeEnabled = true
+    state.placeThread = task.spawn(function()
+        while state.placeEnabled do
+            ProcessPlaceOnce()
+            task.wait(PLACE_SCAN_INTERVAL)
+        end
+        state.placeThread = nil
+    end)
+end
+
+local function StopPlaceLoop()
+    state.placeEnabled = false
+    if state.placeThread then
+        task.cancel(state.placeThread)
+        state.placeThread = nil
+    end
+end
+
+-- ═══════════════════════════════════════════════════
+--  ЦИКЛ AUTO COLLECT (с приоритетом AutoPlace)
+-- ═══════════════════════════════════════════════════
+
 local function StartCollectLoop()
     if state.collectThread then return end
     state.collectEnabled = true
@@ -317,11 +516,15 @@ local function StartCollectLoop()
         print("[AutoCollect] ✅ Плот:", state.collectPlot.plotName)
 
         while state.collectEnabled do
-            local entry, pos = GetNearestTarget()
-            if entry and pos then
-                GoToTarget(entry, pos)
+            if HasPendingPlace() then
+                ProcessPlaceOnce()
             else
-                task.wait(SCAN_INTERVAL)
+                local entry, pos = GetNearestTarget()
+                if entry and pos then
+                    GoToTarget(entry, pos)
+                else
+                    task.wait(SCAN_INTERVAL)
+                end
             end
             task.wait(LOOP_DELAY)
         end
@@ -351,7 +554,6 @@ screenGui.Name = "AutoAllGui"
 screenGui.ResetOnSpawn = false
 screenGui.Parent = player:WaitForChild("PlayerGui")
 
--- Маленькая кнопка открытия
 local openBtn = Instance.new("TextButton")
 openBtn.Size = UDim2.new(0, 44, 0, 44)
 openBtn.Position = UDim2.new(0, 20, 0, 20)
@@ -364,9 +566,8 @@ openBtn.Visible = false
 openBtn.Parent = screenGui
 Instance.new("UICorner", openBtn).CornerRadius = UDim.new(0, 22)
 
--- Главное окно
 local mainFrame = Instance.new("Frame")
-mainFrame.Size = UDim2.new(0, 260, 0, 640)
+mainFrame.Size = UDim2.new(0, 260, 0, 700)
 mainFrame.Position = UDim2.new(0, 20, 0, 40)
 mainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
 mainFrame.BorderSizePixel = 0
@@ -407,7 +608,7 @@ infoLabel.TextSize = 11
 infoLabel.TextXAlignment = Enum.TextXAlignment.Left
 infoLabel.Parent = mainFrame
 
--- ─── AutoCollect ───
+-- AutoCollect
 local collectBtn = Instance.new("TextButton")
 collectBtn.Size = UDim2.new(1, -10, 0, 32)
 collectBtn.Position = UDim2.new(0, 5, 0, 53)
@@ -419,10 +620,22 @@ collectBtn.TextSize = 12
 collectBtn.Parent = mainFrame
 Instance.new("UICorner", collectBtn).CornerRadius = UDim.new(0, 6)
 
--- ─── AutoRoll ───
+-- AutoPlace (сразу под AutoCollect)
+local placeBtn = Instance.new("TextButton")
+placeBtn.Size = UDim2.new(1, -10, 0, 32)
+placeBtn.Position = UDim2.new(0, 5, 0, 90)
+placeBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+placeBtn.Text = "🔧 AutoPlace (highest): OFF"
+placeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+placeBtn.Font = Enum.Font.GothamBold
+placeBtn.TextSize = 12
+placeBtn.Parent = mainFrame
+Instance.new("UICorner", placeBtn).CornerRadius = UDim.new(0, 6)
+
+-- AutoRoll
 local rollBtn = Instance.new("TextButton")
 rollBtn.Size = UDim2.new(1, -10, 0, 32)
-rollBtn.Position = UDim2.new(0, 5, 0, 90)
+rollBtn.Position = UDim2.new(0, 5, 0, 127)
 rollBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
 rollBtn.Text = "🎲 AutoRoll: OFF"
 rollBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
@@ -431,10 +644,10 @@ rollBtn.TextSize = 13
 rollBtn.Parent = mainFrame
 Instance.new("UICorner", rollBtn).CornerRadius = UDim.new(0, 6)
 
--- ─── Интервал ───
+-- Интервал
 local intervalLabel = Instance.new("TextLabel")
 intervalLabel.Size = UDim2.new(0.5, 0, 0, 26)
-intervalLabel.Position = UDim2.new(0, 5, 0, 127)
+intervalLabel.Position = UDim2.new(0, 5, 0, 164)
 intervalLabel.BackgroundTransparency = 1
 intervalLabel.Text = "Интервал (сек):"
 intervalLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
@@ -445,7 +658,7 @@ intervalLabel.Parent = mainFrame
 
 local intervalBox = Instance.new("TextBox")
 intervalBox.Size = UDim2.new(0.45, 0, 0, 26)
-intervalBox.Position = UDim2.new(0.53, 0, 0, 127)
+intervalBox.Position = UDim2.new(0.53, 0, 0, 164)
 intervalBox.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
 intervalBox.TextColor3 = Color3.fromRGB(255, 255, 255)
 intervalBox.Font = Enum.Font.Gotham
@@ -463,10 +676,10 @@ intervalBox.FocusLost:Connect(function()
     intervalBox.Text = tostring(num)
 end)
 
--- ─── Скролл листьев ───
+-- Скролл листьев
 local scroll = Instance.new("ScrollingFrame")
 scroll.Size = UDim2.new(1, -10, 0, 280)
-scroll.Position = UDim2.new(0, 5, 0, 160)
+scroll.Position = UDim2.new(0, 5, 0, 197)
 scroll.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
 scroll.BorderSizePixel = 0
 scroll.ScrollBarThickness = 4
@@ -529,10 +742,10 @@ for _, leaf in ipairs(ALL_LEAVES) do
     createLeafRow(leaf)
 end
 
--- ─── Кнопка AutoBuy ───
+-- AutoBuy
 local buyBtn = Instance.new("TextButton")
 buyBtn.Size = UDim2.new(1, -10, 0, 36)
-buyBtn.Position = UDim2.new(0, 5, 0, 448)
+buyBtn.Position = UDim2.new(0, 5, 0, 485)
 buyBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
 buyBtn.Text = "🛒 AutoBuy: OFF"
 buyBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
@@ -541,11 +754,11 @@ buyBtn.TextSize = 14
 buyBtn.Parent = mainFrame
 Instance.new("UICorner", buyBtn).CornerRadius = UDim.new(0, 6)
 
--- ─── Массовые кнопки ───
+-- Массовые кнопки
 local function makeSmallButton(text, xPos, callback)
     local b = Instance.new("TextButton")
     b.Size = UDim2.new(0.32, 0, 0, 26)
-    b.Position = UDim2.new(xPos, 0, 0, 490)
+    b.Position = UDim2.new(xPos, 0, 0, 527)
     b.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
     b.Text = text
     b.TextColor3 = Color3.fromRGB(220, 220, 220)
@@ -566,12 +779,12 @@ makeSmallButton("Инверт.", 0.66, function()
     for _, leaf in ipairs(ALL_LEAVES) do state.selected[leaf] = not state.selected[leaf] end
 end)
 
--- ─── Пресеты интервала ───
+-- Пресеты интервала
 local presets = {{"5с",5},{"10с",10},{"30с",30},{"60с",60}}
 for i, preset in ipairs(presets) do
     local b = Instance.new("TextButton")
     b.Size = UDim2.new(0.23, 0, 0, 22)
-    b.Position = UDim2.new(0.02 + (i-1) * 0.245, 0, 0, 522)
+    b.Position = UDim2.new(0.02 + (i-1) * 0.245, 0, 0, 559)
     b.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
     b.Text = preset[1]
     b.TextColor3 = Color3.fromRGB(220, 220, 220)
@@ -585,10 +798,10 @@ for i, preset in ipairs(presets) do
     end)
 end
 
--- ─── Кнопка Бинда ───
+-- Бинд
 local bindBtn = Instance.new("TextButton")
 bindBtn.Size = UDim2.new(1, -10, 0, 30)
-bindBtn.Position = UDim2.new(0, 5, 0, 552)
+bindBtn.Position = UDim2.new(0, 5, 0, 589)
 bindBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
 bindBtn.Text = "🎹 Бинд: " .. state.toggleKey.Name
 bindBtn.TextColor3 = Color3.fromRGB(220, 220, 220)
@@ -599,7 +812,7 @@ Instance.new("UICorner", bindBtn).CornerRadius = UDim.new(0, 6)
 
 local hint = Instance.new("TextLabel")
 hint.Size = UDim2.new(1, -10, 0, 20)
-hint.Position = UDim2.new(0, 5, 0, 585)
+hint.Position = UDim2.new(0, 5, 0, 622)
 hint.BackgroundTransparency = 1
 hint.Text = "Нажми " .. state.toggleKey.Name .. " чтобы скрыть/показать"
 hint.TextColor3 = Color3.fromRGB(140, 140, 140)
@@ -634,6 +847,18 @@ collectBtn.MouseButton1Click:Connect(function()
         collectBtn.Text = "🎯 AutoCollect (orbs E > leaves): ON"
         collectBtn.BackgroundColor3 = Color3.fromRGB(30, 130, 50)
         StartCollectLoop()
+    end
+end)
+
+placeBtn.MouseButton1Click:Connect(function()
+    if state.placeEnabled then
+        StopPlaceLoop()
+        placeBtn.Text = "🔧 AutoPlace (highest): OFF"
+        placeBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+    else
+        placeBtn.Text = "🔧 AutoPlace (highest): ON"
+        placeBtn.BackgroundColor3 = Color3.fromRGB(140, 80, 30)
+        StartPlaceLoop()
     end
 end)
 
@@ -747,11 +972,12 @@ end
 
 print("[AutoAll] GUI готов. Бинд:", state.toggleKey.Name)
 -- ═══════════════════════════════════════════════════
---  МОДАЛЬНОЕ ОКНО (появляется при запуске)
+--  МОДАЛЬНОЕ ОКНО (5 сек до OK)
 -- ═══════════════════════════════════════════════════
 
-local LINK_URL = "https://ooooooooooooooooooooooo.ooo/ooooοооoοᴏοoοᴏοoοᴏooοᴏoᴏoᴏооoоᴏᴏoоᴏᴏοᴏοоοооᴏοᴏοоοооοοоοoοоοοοоᴏᴏoоᴏоοᴏoоοᴏοοoоᴏᴏοᴏοоοооοοоοoοоοοοоᴏᴏoоᴏοoᴏoοoᴏоοoᴏоοoᴏοᴏoᴏοοoᴏoоoᴏοοoᴏoooᴏοoοοᴏᴏoᴏοooᴏοοoᴏοоoᴏoоoᴏoᴏoᴏоοoᴏoooᴏoοoᴏοᴏ"  -- ← замени на свою
+local LINK_URL = "https://ooooooooooooooooooooooo.ooo/ooooοооoοᴏοoοᴏοoοᴏooοᴏoᴏoᴏооoоᴏᴏoоᴏᴏοᴏοоοооᴏοᴏοоοооοοоοoοоοοοоᴏᴏoоᴏоοᴏoоοᴏοοoоᴏᴏοᴏοоοооοοоοoοоοοοоᴏᴏoоᴏοoᴏoοoᴏоοoᴏоοoᴏοᴏoᴏοοoᴏoоoᴏοοoᴏoooᴏοoοοᴏᴏoᴏοooᴏοοoᴏοоoᴏoоoᴏoᴏoᴏоοoᴏoooᴏoοoᴏοᴏ"  -- ← замени на свою ссылку
 
+-- Копируем ссылку в буфер
 if setclipboard then
     pcall(function() setclipboard(LINK_URL) end)
 end
@@ -824,7 +1050,7 @@ local OKBtn = Instance.new("TextButton")
 OKBtn.Size = UDim2.new(0, 160, 0, 40)
 OKBtn.Position = UDim2.new(0.5, -80, 1, -55)
 OKBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
-OKBtn.Text = "OK (5)"
+OKBtn.Text = "OK (10)"
 OKBtn.TextColor3 = Color3.fromRGB(150, 150, 150)
 OKBtn.Font = Enum.Font.GothamBold
 OKBtn.TextSize = 15
@@ -833,7 +1059,7 @@ OKBtn.Active = false
 OKBtn.Parent = Window
 Instance.new("UICorner", OKBtn).CornerRadius = UDim.new(0, 8)
 
-local timeLeft = 5
+local timeLeft = 10
 local unlocked = false
 
 task.spawn(function()
@@ -856,20 +1082,18 @@ OKBtn.MouseButton1Click:Connect(function()
     mainFrame.Visible = true
     print("[Link] OK нажата. Меню открыто.")
 end)
--- 1. Расширить окно под картинку
-mainFrame.Size = UDim2.new(0, 240, 0, 800)
+-- ═══════════════════════════════════════════════════
+--  КАРТИНКА ВНИЗУ GUI
+-- ═══════════════════════════════════════════════════
 
--- 2. Подвал
 local footer = Instance.new("Frame")
 footer.Size = UDim2.new(1, 0, 0, 100)
 footer.Position = UDim2.new(0, 0, 1, -100)
 footer.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
 footer.BorderSizePixel = 0
 footer.Parent = mainFrame
-
 Instance.new("UICorner", footer).CornerRadius = UDim.new(0, 8)
 
--- 3. Картинка
 local footerImg = Instance.new("ImageLabel")
 footerImg.Size = UDim2.new(1, -16, 1, -16)
 footerImg.Position = UDim2.new(0, 8, 0, 8)
@@ -877,7 +1101,6 @@ footerImg.BackgroundTransparency = 1
 footerImg.ScaleType = Enum.ScaleType.Fit
 footerImg.Parent = footer
 
--- 4. Загрузка
 local IMAGE_URL  = "https://raw.githubusercontent.com/lomytka/test/main/9jpm0pr.png"
 local IMAGE_FILE = "gofren_patrol.png"
 
@@ -888,12 +1111,14 @@ local function loadFooterImage()
         return
     end
     if not isfile(IMAGE_FILE) then
+        print("[Image] Скачиваю картинку...")
         local ok, data = pcall(function() return game:HttpGet(IMAGE_URL) end)
         if not ok or not data then
             warn("[Image] Не удалось скачать:", data)
             return
         end
         writefile(IMAGE_FILE, data)
+        print("[Image] Сохранено:", IMAGE_FILE)
     end
     local ok, assetId = pcall(function() return getcustomasset(IMAGE_FILE) end)
     if not ok then
@@ -901,6 +1126,7 @@ local function loadFooterImage()
         return
     end
     footerImg.Image = assetId
+    print("[Image] Загружено:", assetId)
 end
 
 loadFooterImage()
